@@ -1,7 +1,10 @@
 import dedent from 'dedent'
 import { describe, it, expect } from 'vitest'
 import { delay, throughObj } from '../../../tools/test-tools.js'
-import conventionalChangelogWriter, { parseArray } from '../index.js'
+import {
+  createChangelogWriterStream,
+  createChangelogFromCommits
+} from '../index.js'
 
 // sv-SEis used for yyyy-mm-dd format
 const dateFormatter = Intl.DateTimeFormat('sv-SE', {
@@ -80,7 +83,7 @@ describe('conventional-changelog-writer', () => {
       const upstream = throughObj()
       upstream.end()
 
-      for await (let chunk of upstream.pipe(conventionalChangelogWriter())) {
+      for await (let chunk of upstream.pipe(createChangelogWriterStream())) {
         chunk = chunk.toString()
         expect(chunk).toBe('##  (' + today + ')\n\n\n\n\n')
         i++
@@ -99,11 +102,11 @@ describe('conventional-changelog-writer', () => {
         host: 'https://github.com',
         repository: 'a/b'
       }
-      const changelog = await parseArray(commits, context)
+      const changelog = await createChangelogFromCommits(commits, context)
 
       expect(changelog).toContain('https://github.com/a/b/commits/13f3160')
 
-      for await (let chunk of getStream().pipe(conventionalChangelogWriter(context))) {
+      for await (let chunk of getStream().pipe(createChangelogWriterStream(context))) {
         chunk = chunk.toString()
         expect(chunk).toContain('https://github.com/a/b/commits/13f3160')
         i++
@@ -119,11 +122,11 @@ describe('conventional-changelog-writer', () => {
         title: 'this is a title',
         repoUrl: 'https://github.com/a/b'
       }
-      const changelog = await parseArray(commits, context)
+      const changelog = await createChangelogFromCommits(commits, context)
 
       expect(changelog).toContain('https://github.com/a/b/commits/13f3160')
 
-      for await (let chunk of getStream().pipe(conventionalChangelogWriter(context))) {
+      for await (let chunk of getStream().pipe(createChangelogWriterStream(context))) {
         chunk = chunk.toString()
         expect(chunk.toString()).toContain('https://github.com/a/b/commits/13f3160')
         i++
@@ -134,11 +137,11 @@ describe('conventional-changelog-writer', () => {
 
     it('should not auto link', async () => {
       let i = 0
-      const changelog = await parseArray(commits, {})
+      const changelog = await createChangelogFromCommits(commits, {})
 
       expect(changelog).not.toContain('https://github.com/a/b/commits/13f3160')
 
-      for await (let chunk of getStream().pipe(conventionalChangelogWriter())) {
+      for await (let chunk of getStream().pipe(createChangelogWriterStream())) {
         chunk = chunk.toString()
         expect(chunk.toString()).not.toContain('https://github.com/a/b/commits/13f3160')
         i++
@@ -156,11 +159,11 @@ describe('conventional-changelog-writer', () => {
         repository: 'a/b',
         linkReferences: false
       }
-      const changelog = await parseArray(commits, context)
+      const changelog = await createChangelogFromCommits(commits, context)
 
       expect(changelog).not.toContain('https://github.com/a/b/commits/13f3160')
 
-      for await (let chunk of getStream().pipe(conventionalChangelogWriter(context))) {
+      for await (let chunk of getStream().pipe(createChangelogWriterStream(context))) {
         chunk = chunk.toString()
         expect(chunk).not.toContain('https://github.com/a/b/commits/13f3160')
         i++
@@ -175,7 +178,7 @@ describe('conventional-changelog-writer', () => {
       let i = 0
       let called = false
 
-      await parseArray(commits, {}, {
+      await createChangelogFromCommits(commits, {}, {
         transform (commit, context) {
           expect(context).toEqual({
             commit: 'commits',
@@ -188,7 +191,7 @@ describe('conventional-changelog-writer', () => {
       })
       expect(called).toBe(true)
 
-      for await (const commit of getStream().pipe(conventionalChangelogWriter({}, {
+      for await (const commit of getStream().pipe(createChangelogWriterStream({}, {
         transform (commit, context) {
           expect(context).toEqual({
             commit: 'commits',
@@ -208,7 +211,7 @@ describe('conventional-changelog-writer', () => {
 
     it('should leave the original commits objects unchanged', async () => {
       expect(commits[1].notes[0].title).toBe('BREAKING CHANGE')
-      await parseArray(commits, {}, {
+      await createChangelogFromCommits(commits, {}, {
         transform: {
           notes (notes) {
             notes.map((note) => {
@@ -229,7 +232,7 @@ describe('conventional-changelog-writer', () => {
 
     it('should merge with the provided transform object', async () => {
       let i = 0
-      const changelog = await parseArray(commits, {}, {
+      const changelog = await createChangelogFromCommits(commits, {}, {
         transform: {
           notes (notes) {
             notes.map((note) => {
@@ -248,7 +251,7 @@ describe('conventional-changelog-writer', () => {
       expect(changelog).toContain('BREAKING CHANGES')
       expect(changelog).not.toContain('13f31602f396bc269076ab4d389cfd8ca94b20ba')
 
-      for await (let chunk of getStream().pipe(conventionalChangelogWriter({}, {
+      for await (let chunk of getStream().pipe(createChangelogWriterStream({}, {
         transform: {
           notes (notes) {
             notes.map((note) => {
@@ -277,7 +280,7 @@ describe('conventional-changelog-writer', () => {
 
     it('should ignore the commit if tranform returns `null`', async () => {
       let i = 0
-      const changelog = await parseArray(commits, {}, {
+      const changelog = await createChangelogFromCommits(commits, {}, {
         transform () {
           return false
         }
@@ -285,7 +288,7 @@ describe('conventional-changelog-writer', () => {
 
       expect(changelog).toBe('##  (' + today + ')\n\n\n\n\n')
 
-      for await (let chunk of getStream().pipe(conventionalChangelogWriter({}, {
+      for await (let chunk of getStream().pipe(createChangelogWriterStream({}, {
         transform () {
           return false
         }
@@ -300,7 +303,7 @@ describe('conventional-changelog-writer', () => {
     })
 
     it('should support tranform commits async', async () => {
-      const changelog = await parseArray(commits, {}, {
+      const changelog = await createChangelogFromCommits(commits, {}, {
         async transform () {
           await delay(100)
           return {
@@ -368,7 +371,7 @@ describe('conventional-changelog-writer', () => {
 
     it('should generate on the transformed commit', async () => {
       let i = 0
-      const changelog = await parseArray(commits, {
+      const changelog = await createChangelogFromCommits(commits, {
         version: '1.0.0'
       }, {
         transform (commit) {
@@ -379,7 +382,7 @@ describe('conventional-changelog-writer', () => {
 
       expect(changelog).toContain('# 1.0.0 ')
 
-      for await (let chunk of getStream().pipe(conventionalChangelogWriter({
+      for await (let chunk of getStream().pipe(createChangelogWriterStream({
         version: '1.0.0'
       }, {
         transform (commit) {
@@ -398,7 +401,7 @@ describe('conventional-changelog-writer', () => {
     describe('when commits are not reversed', () => {
       it('should generate on `\'version\'` if it\'s a valid semver', async () => {
         let i = 0
-        const changelog = await parseArray(commits)
+        const changelog = await createChangelogFromCommits(commits)
 
         expect(changelog).toContain('##  (' + today)
         expect(changelog).toContain('feat(scope): ')
@@ -407,7 +410,7 @@ describe('conventional-changelog-writer', () => {
         expect(changelog).toContain('perf(template): ')
         expect(changelog).toContain('refactor(name): ')
 
-        for await (let chunk of getStream().pipe(conventionalChangelogWriter())) {
+        for await (let chunk of getStream().pipe(createChangelogWriterStream())) {
           chunk = chunk.toString()
 
           if (i === 0) {
@@ -479,7 +482,7 @@ describe('conventional-changelog-writer', () => {
 
         upstream.end()
 
-        const changelog = await parseArray(commits, {}, {
+        const changelog = await createChangelogFromCommits(commits, {}, {
           generateOn: 'version'
         })
 
@@ -491,7 +494,7 @@ describe('conventional-changelog-writer', () => {
         expect(changelog).toContain('refactor(name): rename this module to conventional-changelog-writer')
         expect(changelog).toContain('perf(template): tweak')
 
-        for await (let chunk of upstream.pipe(conventionalChangelogWriter({}, {
+        for await (let chunk of upstream.pipe(createChangelogWriterStream({}, {
           generateOn: 'version'
         }))) {
           chunk = chunk.toString()
@@ -520,7 +523,7 @@ describe('conventional-changelog-writer', () => {
       it('`generateOn` could be a function', async () => {
         let i = 0
 
-        for await (let chunk of getStream().pipe(conventionalChangelogWriter({}, {
+        for await (let chunk of getStream().pipe(createChangelogWriterStream({}, {
           generateOn (commit, commits, context, options) {
             expect(commits.length).toBeTypeOf('number')
             expect(context.commit).toBe('commits')
@@ -545,7 +548,7 @@ describe('conventional-changelog-writer', () => {
       it('`generateOn` could be a null', async () => {
         let i = 0
 
-        for await (let chunk of getStream().pipe(conventionalChangelogWriter({}, {
+        for await (let chunk of getStream().pipe(createChangelogWriterStream({}, {
           generateOn: null
         }))) {
           chunk = chunk.toString()
@@ -561,7 +564,7 @@ describe('conventional-changelog-writer', () => {
       it('version should fall back on `context.version` and `context.date`', async () => {
         let i = 0
 
-        const changelog = await parseArray(commits, {
+        const changelog = await createChangelogFromCommits(commits, {
           version: '0.0.1',
           date: '2015-01-01'
         })
@@ -569,7 +572,7 @@ describe('conventional-changelog-writer', () => {
         expect(changelog).toContain('## <small>0.0.1 (2015-01-01)</small>')
         expect(changelog).toContain('## <small>1.0.1 (2015-04-07)</small>')
 
-        for await (let chunk of getStream().pipe(conventionalChangelogWriter({
+        for await (let chunk of getStream().pipe(createChangelogWriterStream({
           version: '0.0.1',
           date: '2015-01-01'
         }))) {
@@ -590,7 +593,7 @@ describe('conventional-changelog-writer', () => {
       it('should still generate a block even if the commit is ignored', async () => {
         let i = 0
 
-        for await (let chunk of getStream().pipe(conventionalChangelogWriter({}, {
+        for await (let chunk of getStream().pipe(createChangelogWriterStream({}, {
           transform () {
             return false
           }
@@ -612,7 +615,7 @@ describe('conventional-changelog-writer', () => {
       it('should include details', async () => {
         let i = 0
 
-        for await (const chunk of getStream().pipe(conventionalChangelogWriter({}, {
+        for await (const chunk of getStream().pipe(createChangelogWriterStream({}, {
           includeDetails: true
         }))) {
           if (i === 0) {
@@ -665,7 +668,7 @@ describe('conventional-changelog-writer', () => {
         })
         upstream.end()
 
-        for await (let chunk of upstream.pipe(conventionalChangelogWriter({
+        for await (let chunk of upstream.pipe(createChangelogWriterStream({
           version: 'v2.0.0'
         }, {
           doFlush: false
@@ -702,7 +705,7 @@ describe('conventional-changelog-writer', () => {
         upstream.end()
 
         // eslint-disable-next-line no-unreachable-loop
-        for await (const chunk of upstream.pipe(conventionalChangelogWriter({
+        for await (const chunk of upstream.pipe(createChangelogWriterStream({
           version: 'v2.0.0'
         }, {
           doFlush: false
@@ -761,7 +764,7 @@ describe('conventional-changelog-writer', () => {
 
         upstream.end()
 
-        const changelog = await parseArray(commits, {}, {
+        const changelog = await createChangelogFromCommits(commits, {}, {
           reverse: true
         })
 
@@ -786,7 +789,7 @@ describe('conventional-changelog-writer', () => {
 
         ##  (xxxx-xx-xx)`).replace('xxxx-xx-xx', today))
 
-        for await (let chunk of upstream.pipe(conventionalChangelogWriter({}, {
+        for await (let chunk of upstream.pipe(createChangelogWriterStream({}, {
           reverse: true
         }))) {
           chunk = chunk.toString()
@@ -819,7 +822,7 @@ describe('conventional-changelog-writer', () => {
       it('should still generate a block even if the commit is ignored', async () => {
         let i = 0
 
-        for await (let chunk of getStream().pipe(conventionalChangelogWriter({}, {
+        for await (let chunk of getStream().pipe(createChangelogWriterStream({}, {
           transform () {
             return false
           },
@@ -842,7 +845,7 @@ describe('conventional-changelog-writer', () => {
       it('should include details', async () => {
         let i = 0
 
-        for await (const chunk of getStream().pipe(conventionalChangelogWriter({}, {
+        for await (const chunk of getStream().pipe(createChangelogWriterStream({}, {
           reverse: true,
           includeDetails: true
         }))) {
@@ -896,7 +899,7 @@ describe('conventional-changelog-writer', () => {
         })
         upstream.end()
 
-        for await (let chunk of upstream.pipe(conventionalChangelogWriter({
+        for await (let chunk of upstream.pipe(createChangelogWriterStream({
           version: 'v2.0.0'
         }, {
           reverse: true,
@@ -935,7 +938,7 @@ describe('conventional-changelog-writer', () => {
       upstream.end()
 
       // eslint-disable-next-line no-unreachable-loop
-      for await (const chunk of upstream.pipe(conventionalChangelogWriter({
+      for await (const chunk of upstream.pipe(createChangelogWriterStream({
         version: 'v2.0.0'
       }, {
         reverse: true,
@@ -959,7 +962,7 @@ describe('conventional-changelog-writer', () => {
     })
     upstream.end()
 
-    for await (const chunk of upstream.pipe(conventionalChangelogWriter())) {
+    for await (const chunk of upstream.pipe(createChangelogWriterStream())) {
       expect(chunk.toString()).toBe('##  (' + today + ')\n\n* bla\n\n\n\n')
       i++
     }
@@ -997,13 +1000,13 @@ describe('conventional-changelog-writer', () => {
     })
     upstream.end()
 
-    for await (const chunk of upstream.pipe(conventionalChangelogWriter())) {
+    for await (const chunk of upstream.pipe(createChangelogWriterStream())) {
       expect(chunk.toString()).toMatch(/Another change.[\w\W]*No backward compatibility.[\w\W]*Some breaking change./)
     }
   })
 
   it('should not error if version is not semver', async () => {
-    for await (const chunk of getStream().pipe(conventionalChangelogWriter({
+    for await (const chunk of getStream().pipe(createChangelogWriterStream({
       version: 'a.b.c'
     }))) {
       expect(chunk.toString()).toContain('a.b.c')
@@ -1012,7 +1015,7 @@ describe('conventional-changelog-writer', () => {
 
   it('should callback with error on transform', async () => {
     await expect(async () => {
-      for await (const chunk of getStream().pipe(conventionalChangelogWriter({}, {
+      for await (const chunk of getStream().pipe(createChangelogWriterStream({}, {
         transform () {
           return undefined.a
         }
@@ -1024,7 +1027,7 @@ describe('conventional-changelog-writer', () => {
 
   it('should callback with error on flush', async () => {
     await expect(async () => {
-      for await (const chunk of getStream().pipe(conventionalChangelogWriter({}, {
+      for await (const chunk of getStream().pipe(createChangelogWriterStream({}, {
         finalizeContext () {
           return undefined.a
         }
@@ -1037,7 +1040,7 @@ describe('conventional-changelog-writer', () => {
   it('should show your final context', async () => {
     let context = null
 
-    for await (const chunk of getStream().pipe(conventionalChangelogWriter({}, {
+    for await (const chunk of getStream().pipe(createChangelogWriterStream({}, {
       debug (message) {
         context = message
       }

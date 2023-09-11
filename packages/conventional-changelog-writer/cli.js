@@ -5,7 +5,7 @@ import { createReadStream } from 'fs'
 import { readFile } from 'fs/promises'
 import split from 'split2'
 import meow from 'meow'
-import conventionalChangelogWriter from './index.js'
+import { createChangelogWriterStream } from './index.js'
 
 function relativeResolve (filePath) {
   return pathToFileURL(resolve(process.cwd(), filePath))
@@ -40,9 +40,11 @@ const cli = meow(`
 const flags = cli.flags
 const filePaths = cli.input
 const length = filePaths.length
-
-let templateContext
 const contextPath = flags.context
+const optionsPath = flags.options
+let templateContext
+let options
+
 if (contextPath) {
   try {
     templateContext = JSON.parse(await readFile(relativeResolve(contextPath), 'utf8'))
@@ -52,8 +54,6 @@ if (contextPath) {
   }
 }
 
-let options
-const optionsPath = flags.options
 if (optionsPath) {
   try {
     options = (await import(relativeResolve(optionsPath))).default
@@ -64,8 +64,9 @@ if (optionsPath) {
 }
 
 let stream
+
 try {
-  stream = conventionalChangelogWriter(templateContext, options)
+  stream = createChangelogWriterStream(templateContext, options)
 } catch (err) {
   console.error(err.toString())
   process.exit(1)

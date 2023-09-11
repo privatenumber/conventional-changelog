@@ -2,13 +2,16 @@ import conventionalCommitsFilter from 'conventional-commits-filter'
 import Handlebars from 'handlebars'
 import semver from 'semver'
 import stringify from 'json-stringify-safe'
+import { get, set } from './immutable.js'
 
 export function compileTemplates (templates) {
-  const main = templates.mainTemplate
-  const headerPartial = templates.headerPartial
-  const commitPartial = templates.commitPartial
-  const footerPartial = templates.footerPartial
-  const partials = templates.partials
+  const {
+    mainTemplate: main,
+    headerPartial,
+    commitPartial,
+    footerPartial,
+    partials
+  } = templates
 
   if (typeof headerPartial === 'string') {
     Handlebars.registerPartial('header', headerPartial)
@@ -23,7 +26,7 @@ export function compileTemplates (templates) {
   }
 
   if (partials) {
-    Object.entries(partials).forEach(function ([name, partial]) {
+    Object.entries(partials).forEach(([name, partial]) => {
       if (typeof partial === 'string') {
         Handlebars.registerPartial(name, partial)
       }
@@ -58,7 +61,7 @@ export function functionify (strOrArr) {
 
 export function getCommitGroups (groupBy, commits, groupsSort, commitsSort) {
   const commitGroups = []
-  const commitGroupsObj = commits.reduce(function (groups, commit) {
+  const commitGroupsObj = commits.reduce((groups, commit) => {
     const key = commit[groupBy] || ''
 
     if (groups[key]) {
@@ -70,7 +73,7 @@ export function getCommitGroups (groupBy, commits, groupsSort, commitsSort) {
     return groups
   }, {})
 
-  Object.entries(commitGroupsObj).forEach(function ([title, commits]) {
+  Object.entries(commitGroupsObj).forEach(([title, commits]) => {
     if (title === '') {
       title = false
     }
@@ -95,11 +98,11 @@ export function getCommitGroups (groupBy, commits, groupsSort, commitsSort) {
 export function getNoteGroups (notes, noteGroupsSort, notesSort) {
   const retGroups = []
 
-  notes.forEach(function (note) {
+  notes.forEach((note) => {
     const title = note.title
     let titleExists = false
 
-    retGroups.forEach(function (group) {
+    retGroups.forEach((group) => {
       if (group.title === title) {
         titleExists = true
         group.notes.push(note)
@@ -120,34 +123,12 @@ export function getNoteGroups (notes, noteGroupsSort, notesSort) {
   }
 
   if (notesSort) {
-    retGroups.forEach(function (group) {
+    retGroups.forEach((group) => {
       group.notes.sort(notesSort)
     })
   }
 
   return retGroups
-}
-
-function get (context, path) {
-  const parts = path.split('.')
-
-  return parts.reduce((context, key) =>
-    context ? context[key] : context
-  , context)
-}
-
-function immutableSet (context, path, value) {
-  const parts = Array.isArray(path) ? path.slice() : path.split('.')
-  const key = parts.shift()
-
-  if (!key) {
-    return context
-  }
-
-  return {
-    ...context,
-    [key]: parts.length ? immutableSet(context[key], parts, value) : value
-  }
 }
 
 function cloneCommit (commit) {
@@ -178,7 +159,7 @@ export async function processCommit (chunk, transform, context) {
   let commit
 
   try {
-    chunk = JSON.parse(chunk)
+    chunk = JSON.parse(chunk) // @todo: ???
   } catch (e) {}
 
   commit = cloneCommit(chunk)
@@ -194,7 +175,7 @@ export async function processCommit (chunk, transform, context) {
   }
 
   if (transform) {
-    Object.entries(transform).forEach(function ([path, el]) {
+    Object.entries(transform).forEach(([path, el]) => {
       let value = get(commit, path)
 
       if (typeof el === 'function') {
@@ -203,7 +184,7 @@ export async function processCommit (chunk, transform, context) {
         value = el
       }
 
-      commit = immutableSet(commit, path, value)
+      commit = set(commit, path, value)
     })
   }
 
@@ -213,21 +194,18 @@ export async function processCommit (chunk, transform, context) {
 }
 
 export function getExtraContext (commits, notes, options) {
-  const context = {}
-
-  // group `commits` by `options.groupBy`
-  context.commitGroups = getCommitGroups(options.groupBy, commits, options.commitGroupsSort, options.commitsSort)
-
-  // group `notes` for footer
-  context.noteGroups = getNoteGroups(notes, options.noteGroupsSort, options.notesSort)
-
-  return context
+  return {
+    // group `commits` by `options.groupBy`
+    commitGroups: getCommitGroups(options.groupBy, commits, options.commitGroupsSort, options.commitsSort),
+    // group `notes` for footer
+    noteGroups: getNoteGroups(notes, options.noteGroupsSort, options.notesSort)
+  }
 }
 
 export async function generate (options, commits, context, keyCommit) {
+  const compiled = compileTemplates(options)
   const notes = []
   let filteredCommits
-  const compiled = compileTemplates(options)
 
   if (options.ignoreReverted) {
     filteredCommits = conventionalCommitsFilter(commits)

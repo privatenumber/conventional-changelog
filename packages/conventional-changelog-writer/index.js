@@ -10,26 +10,30 @@ import {
 } from './lib/util.js'
 
 const dirname = fileURLToPath(new URL('.', import.meta.url))
-
 // sv-SE is used for yyyy-mm-dd format
 const dateFormatter = Intl.DateTimeFormat('sv-SE', {
   timeZone: 'UTC'
 })
 
-function immediate () {
-  return new Promise(resolve => setImmediate(resolve))
-}
+// function immediate () {
+//   return new Promise(resolve => setImmediate(resolve))
+// }
 
-async function conventionalChangelogWriterInit (context, options) {
-  context = {
+async function finalize (context, options) {
+  const finalContext = {
     commit: 'commits',
     issue: 'issues',
     date: dateFormatter.format(new Date()),
     ...context
   }
 
-  if (typeof context.linkReferences !== 'boolean' && (context.repository || context.repoUrl) && context.commit && context.issue) {
-    context.linkReferences = true
+  if (
+    typeof finalContext.linkReferences !== 'boolean' &&
+    (finalContext.repository || finalContext.repoUrl) &&
+    finalContext.commit &&
+    finalContext.issue
+  ) {
+    finalContext.linkReferences = true
   }
 
   const [
@@ -43,8 +47,7 @@ async function conventionalChangelogWriterInit (context, options) {
     readFile(join(dirname, 'templates/commit.hbs'), 'utf-8'),
     readFile(join(dirname, 'templates/footer.hbs'), 'utf-8')
   ])
-
-  options = {
+  const finalOptions = {
     groupBy: 'type',
     commitsSort: 'header',
     noteGroupsSort: 'title',
@@ -63,185 +66,166 @@ async function conventionalChangelogWriterInit (context, options) {
     ...options
   }
 
-  if (!options.transform || typeof options.transform === 'object') {
-    options.transform = {
-      hash: function (hash) {
+  if (!finalOptions.transform || typeof finalOptions.transform === 'object') {
+    finalOptions.transform = {
+      hash: (hash) => {
         if (typeof hash === 'string') {
           return hash.substring(0, 7)
         }
       },
-      header: function (header) {
+      header: (header) => {
         return header.substring(0, 100)
       },
-      committerDate: function (date) {
+      committerDate: (date) => {
         if (!date) {
           return
         }
 
         return dateFormatter.format(new Date(date))
       },
-      ...options.transform
+      ...finalOptions.transform
     }
   }
 
-  let generateOn = options.generateOn
+  let generateOn = finalOptions.generateOn
+
   if (typeof generateOn === 'string') {
-    generateOn = function (commit) {
-      return typeof commit[options.generateOn] !== 'undefined'
-    }
+    generateOn = (commit) => typeof commit[finalOptions.generateOn] !== 'undefined'
   } else if (typeof generateOn !== 'function') {
-    generateOn = function () {
-      return false
-    }
+    generateOn = () => false
   }
 
-  options.commitGroupsSort = functionify(options.commitGroupsSort)
-  options.commitsSort = functionify(options.commitsSort)
-  options.noteGroupsSort = functionify(options.noteGroupsSort)
-  options.notesSort = functionify(options.notesSort)
+  finalOptions.commitGroupsSort = functionify(finalOptions.commitGroupsSort)
+  finalOptions.commitsSort = functionify(finalOptions.commitsSort)
+  finalOptions.noteGroupsSort = functionify(finalOptions.noteGroupsSort)
+  finalOptions.notesSort = functionify(finalOptions.notesSort)
 
-  return { context, options, generateOn }
+  return { finalContext, finalOptions, generateOn }
 }
 
-export default function conventionalChangelogWriterParseStream (inputContext, inputOptions) {
-  const initPromise = conventionalChangelogWriterInit(inputContext, inputOptions)
-  let commits = []
+/**
+ * Creates an async generator of changelog entries from commits.
+ * @param {Commit[] | Readable | AsyncIterator<Commit> | AsyncGenerator<Commit>} commits - Commits to generate changelog from.
+ * @param {*} context - Context for changelog template.
+ * @param {*} options - Options for changelog template.
+ * @returns {AsyncGenerator<string>} AsyncGenerator of changelog entries.
+ */
+export async function * createChangelogAsyncGeneratorFromCommits (commits, context, options) {
+  const {
+    finalContext,
+    finalOptions,
+    generateOn
+  } = await finalize(context, options)
+  let chunk
+  let commit
+  let keyCommit
+  let commitsGroup = []
   let neverGenerated = true
+  let result
   let savedKeyCommit
   let firstRelease = true
 
-  return new Transform({
-    objectMode: true,
-    highWaterMark: 16,
-    // `transform` option should not return Promises.
-    // It cause a bug in Node.js 16, because it interprets the Promise resolve as a callback call.
-    // In Node 20 it handle only callback call, Promises is not handled.
-    transform (chunk, _enc, cb) {
-      (async () => {
-        try {
-          const { context, options, generateOn } = await initPromise
-          let result
-          const commit = await processCommit(chunk, options.transform, context)
-          const keyCommit = commit || chunk
+  for await (chunk of commits) {
+    commit = await processCommit(chunk, finalOptions.transform, finalContext)
+    keyCommit = commit || chunk
 
-          // previous blocks of logs
-          if (options.reverse) {
-            if (commit) {
-              commits.push(commit)
-            }
+    // previous blocks of logs
+    if (finalOptions.reverse) {
+      if (commit) {
+        commitsGroup.push(commit)
+      }
 
-            if (generateOn(keyCommit, commits, context, options)) {
-              neverGenerated = false
-              result = await generate(options, commits, context, keyCommit)
+      if (generateOn(keyCommit, commitsGroup, finalContext, finalOptions)) {
+        neverGenerated = false
+        result = await generate(finalOptions, commitsGroup, finalContext, keyCommit)
 
-              await immediate()
+        // await immediate()
 
-              if (options.includeDetails) {
-                this.push({
-                  log: result,
-                  keyCommit
-                })
-              } else {
-                this.push(result)
-              }
-
-              commits = []
-            }
-          } else {
-            if (generateOn(keyCommit, commits, context, options)) {
-              neverGenerated = false
-              result = await generate(options, commits, context, savedKeyCommit)
-
-              if (!firstRelease || options.doFlush) {
-                await immediate()
-
-                if (options.includeDetails) {
-                  this.push({
-                    log: result,
-                    keyCommit: savedKeyCommit
-                  })
-                } else {
-                  this.push(result)
-                }
-              }
-
-              firstRelease = false
-              commits = []
-              savedKeyCommit = keyCommit
-            }
-
-            if (commit) {
-              commits.push(commit)
-            }
+        if (finalOptions.includeDetails) {
+          yield {
+            log: result,
+            keyCommit
           }
-
-          cb()
-        } catch (err) {
-          cb(err)
+        } else {
+          yield result
         }
-      })()
-    },
-    flush (cb) {
-      (async () => {
-        try {
-          const { context, options } = await initPromise
 
-          if (!options.doFlush && (options.reverse || neverGenerated)) {
-            cb(null)
-            return
-          }
+        commitsGroup = []
+      }
+    } else {
+      if (generateOn(keyCommit, commitsGroup, finalContext, finalOptions)) {
+        neverGenerated = false
+        result = await generate(finalOptions, commitsGroup, finalContext, savedKeyCommit)
 
-          const result = await generate(options, commits, context, savedKeyCommit)
+        if (!firstRelease || finalOptions.doFlush) {
+          // await immediate()
 
-          await immediate()
-
-          if (options.includeDetails) {
-            this.push({
+          if (finalOptions.includeDetails) {
+            yield {
               log: result,
               keyCommit: savedKeyCommit
-            })
+            }
           } else {
-            this.push(result)
+            yield result
           }
-
-          cb()
-        } catch (err) {
-          cb(err)
         }
-      })()
+
+        firstRelease = false
+        commitsGroup = []
+        savedKeyCommit = keyCommit
+      }
+
+      if (commit) {
+        commitsGroup.push(commit)
+      }
     }
-  })
+  }
+
+  if (!finalOptions.doFlush && (finalOptions.reverse || neverGenerated)) {
+    return
+  }
+
+  result = await generate(finalOptions, commitsGroup, finalContext, savedKeyCommit)
+
+  // await immediate()
+
+  if (finalOptions.includeDetails) {
+    yield {
+      log: result,
+      keyCommit: savedKeyCommit
+    }
+  } else {
+    yield result
+  }
 }
 
-/*
- * Given an array of commits, returns a string representing a CHANGELOG entry.
+/**
+ * Creates a transform stream which takes commits and outputs changelog entries.
+ * @param {*} context - Context for changelog template.
+ * @param {*} options - Options for changelog template.
+ * @returns {Transform} Transform stream which takes commits and outputs changelog entries.
  */
-export async function parseArray (rawCommits, context, options) {
-  let generateOn
-  rawCommits = [...rawCommits];
-  ({ context, options, generateOn } = await conventionalChangelogWriterInit(context, options))
-  let commits = []
-  let savedKeyCommit
-  if (options.reverse) {
-    rawCommits.reverse()
+export function createChangelogWriterStream (context, options) {
+  return Transform.from(
+    (commits) => createChangelogAsyncGeneratorFromCommits(commits, context, options)
+  )
+}
+
+/**
+ * Create a changelog from commits.
+ * @param {Commit[] | Readable | AsyncIterator<Commit> | AsyncGenerator<Commit>} commits - Commits to generate changelog from.
+ * @param {*} context - Context for changelog template.
+ * @param {*} options - Options for changelog template.
+ * @returns {Promise<string>} Changelog string.
+ */
+export async function createChangelogFromCommits (commits, context, options) {
+  const changelogAsyncGenerator = createChangelogAsyncGeneratorFromCommits(commits, context, options)
+  let changelog = ''
+  let chunk
+
+  for await (chunk of changelogAsyncGenerator) {
+    changelog += chunk
   }
-  const entries = []
-  for (const rawCommit of rawCommits) {
-    const commit = await processCommit(rawCommit, options.transform, context)
-    const keyCommit = commit || rawCommit
-    if (generateOn(keyCommit, commits, context, options)) {
-      entries.push(await generate(options, commits, context, savedKeyCommit))
-      savedKeyCommit = keyCommit
-      commits = []
-    }
-    if (commit) {
-      commits.push(commit)
-    }
-  }
-  if (options.reverse) {
-    entries.reverse()
-    return await generate(options, commits, context, savedKeyCommit) + entries.join('')
-  } else {
-    return entries.join('') + await generate(options, commits, context, savedKeyCommit)
-  }
+
+  return changelog
 }
